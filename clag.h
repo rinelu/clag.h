@@ -83,6 +83,10 @@
 #define CLAG_LIST_INIT_CAP 8
 #endif // CLAG_LIST_INIT_CAP
 
+#ifndef CLAG_NAME_MAP_CAP
+#  define CLAG_NAME_MAP_CAP 512
+#endif
+
 typedef struct {
     char **items;
     size_t count;
@@ -135,7 +139,7 @@ void clag_print_options(FILE *stream);
  
 // Lookup the registered name for an arbitrary value pointer
 // (useful for custom error messages). Return NULL if not found.
-char *clag_name(void *val);
+const char *clag_name(void *val);
 
 #endif // CLAG_H_
 
@@ -144,6 +148,7 @@ char *clag_name(void *val);
 
 typedef enum {
     CLAG_TYPE_BOOL = 0,
+    CLAG_TYPE_INT64,
     CLAG_TYPE_UINT64,
     CLAG_TYPE_DOUBLE,
     CLAG_TYPE_FLOAT,
@@ -153,10 +158,11 @@ typedef enum {
     COUNT_CLAG_TYPES,
 } ClagType;
 
-static_assert(COUNT_CLAG_TYPES == 7, "Exhaustive ClagType / ClagValue handling required");
+static_assert(COUNT_CLAG_TYPES == 8, "Exhaustive ClagType / ClagValue handling required");
 
 typedef union {
-    char     *as_str;
+    char    *as_str;
+    int64_t  as_int64;
     uint64_t as_uint64;
     double   as_double;
     float    as_float;
@@ -171,6 +177,7 @@ typedef enum {
     CLAG_ERR_NO_VALUE,
     CLAG_ERR_INVALID_NUMBER,
     CLAG_ERR_INT_OVERFLOW,
+    CLAG_ERR_INT_UNDERFLOW,
     CLAG_ERR_FLOAT_OVERFLOW,
     CLAG_ERR_DOUBLE_OVERFLOW,
     CLAG_ERR_INVALID_SIZE_SUFFIX,
@@ -193,6 +200,9 @@ typedef struct {
 typedef struct {
     Clag   flags[CLAG_CAP];
     size_t flags_count;
+
+    const char *name_ht[CLAG_NAME_MAP_CAP];
+    void       *ptr_ht [CLAG_NAME_MAP_CAP];
 
     ClagError   error;
     const char *error_flag_name;
@@ -240,6 +250,7 @@ static void *clag__val_ptr(ClagValue *v, ClagType t)
 {
     switch (t) {
         case CLAG_TYPE_BOOL:   return &v->as_bool;
+        case CLAG_TYPE_INT64:  return &v->as_int64;
         case CLAG_TYPE_UINT64: return &v->as_uint64;
         case CLAG_TYPE_DOUBLE: return &v->as_double;
         case CLAG_TYPE_FLOAT:  return &v->as_float;
@@ -327,6 +338,14 @@ static bool clag__apply(Clag *f, const char *raw)
         *(bool *)clag__ref(f) = v;
         return true;
     }
+
+    case CLAG_TYPE_INT64: {
+        long long v = strtoll(raw, &end, 0);
+        if (end == raw || *end != '\0') RET_ERR(CLAG_ERR_INVALID_NUMBER);
+        if (errno == ERANGE) RET_ERR((v < 0) ? CLAG_ERR_INT_UNDERFLOW : CLAG_ERR_INT_OVERFLOW);
+        *(int64_t *)clag__ref(f) = (int64_t)v;
+        break;
+    }
  
     case CLAG_TYPE_UINT64: {
         unsigned long long v = strtoull(raw, &end, 0);
@@ -392,6 +411,15 @@ static bool clag__apply(Clag *f, const char *raw)
 // Private registration helpers
 // ---------------------------- 
 
+static size_t clag__ptr_hash(void *p)
+{
+    uintptr_t x = (uintptr_t)p;
+    x ^= x >> 33;
+    x *= 0xff51afd7ed558ccdULL;
+    x ^= x >> 33;
+    return (size_t)x;
+}
+
 static Clag *clag__register(ClagType type, void *external_var, const char *name, const char *desc)
 {
     Clag *f = clag__alloc(type, name, desc);
@@ -403,6 +431,14 @@ static Clag *clag__register(ClagType type, void *external_var, const char *name,
         f->ref = clag__val_ptr(&f->val, type);
         f->ref_is_external = false;
     }
+    size_t i = clag__ptr_hash(f->ref) % CLAG_NAME_MAP_CAP;
+
+    while (g_clag.ptr_ht[i] != NULL) {
+        i = (i + 1) % CLAG_NAME_MAP_CAP;
+    }
+
+    g_clag.ptr_ht[i]  = f->ref;
+    g_clag.name_ht[i] = f->name;
     return f;
 }
 
@@ -410,6 +446,11 @@ static void clag__init_bool(Clag *f, bool def)
 {
     f->def.as_bool = def;
     *(bool *)clag__ref(f) = def;
+}
+static void clag__init_int64(Clag *f, int64_t def)
+{
+    f->def.as_int64 = def;
+    *(int64_t *)clag__ref(f) = def;
 }
 static void clag__init_uint64(Clag *f, uint64_t def)
 {
@@ -480,6 +521,17 @@ void clag_double_var(double *var, const char *name, double def, const char *desc
 {
     Clag *f = clag__register(CLAG_TYPE_DOUBLE, var, name, desc);
     clag__init_double(f, def);
+}
+uint64_t *clag_int64(const char *name, int64_t def, const char *desc)
+{
+    Clag *f = clag__register(CLAG_TYPE_UINT64, NULL, name, desc);
+    clag__init_int64(f, def);
+    return (int64_t *)clag__ref(f);
+}
+void clag_int64_var(int64_t *var, const char *name, int64_t def, const char *desc)
+{
+    Clag *f = clag__register(CLAG_TYPE_UINT64, var, name, desc);
+    clag__init_int64(f, def);
 }
  
 uint64_t *clag_uint64(const char *name, uint64_t def, const char *desc)
@@ -625,13 +677,20 @@ int    clag_rest_argc(void)    { return g_clag.rest_argc; }
 char **clag_rest_argv(void)    { return g_clag.rest_argv; }
 const char *clag_program_name(void) { return g_clag.program_name; }
  
-char *clag_name(void *val)
+const char *clag_name(void *val)
 {
-    for (size_t i = 0; i < g_clag.flags_count; i++) {
-        if (clag__ref(&g_clag.flags[i]) == val)
-            return (char *)g_clag.flags[i].name;
+    if (!val) return NULL;
+
+    size_t i = clag__ptr_hash(val) % CLAG_NAME_MAP_CAP;
+
+    for (;;) {
+        void *p = g_clag.ptr_ht[i];
+
+        if (!p) return NULL;
+        if (p == val) return g_clag.name_ht[i];
+
+        i = (i + 1) % CLAG_NAME_MAP_CAP;
     }
-    return NULL;
 }
 
 // -----------
@@ -657,6 +716,9 @@ void clag_print_error(FILE *s)
         break;
     case CLAG_ERR_INT_OVERFLOW:
         fprintf(s, "%s: integer overflow for flag -%s\n", prog, flag);
+        break;
+    case CLAG_ERR_INT_UNDERFLOW:
+        fprintf(s, "%s: integer underflow for flag -%s\n", prog, flag);
         break;
     case CLAG_ERR_FLOAT_OVERFLOW:
         fprintf(s, "%s: float overflow for flag -%s\n", prog, flag);
@@ -749,7 +811,13 @@ void clag_print_options(FILE *s)
 /*
 # Changelog
 
-  1.0.0 (2026-03-24) Initial release
+        1.1.0 (2026-03-25)
+                     - Make clag_name() O(1) using pointer lookup table
+                     - Add new error: CLAG_ERR_INT_UNDERFLOW
+                     - Add new type: int64 (clag_int64 / _var)
+                     - Add internal pointer->name mapping for fast reverse lookup
+
+        1.0.0 (2026-03-24)
                      - Core flag system
                      - All supported types
                      - Inline and separate parsing
@@ -779,7 +847,7 @@ void clag_print_options(FILE *s)
    This software is available under 2 licenses -- choose whichever you prefer.
    ------------------------------------------------------------------------------
    ALTERNATIVE A - MIT License
-   Copyright (c) 2024 Rama Maulana
+   Copyright (c) 2026 Rama Maulana
    Permission is hereby granted, free of charge, to any person obtaining a copy of
    this software and associated documentation files (the "Software"), to deal in
    the Software without restriction, including without limitation the rights to
