@@ -10,9 +10,9 @@ A tiny single-header CLI argument parser for C.
 
 int main(int argc, char **argv)
 {
-    bool     *verbose = clag_bool("verbose", 'v', false, "enable logging");
-    uint64_t *count   = clag_uint64("count",   'c', 10,    "iteration count");
-    char     **name   = clag_str("name",    'n', "world", "name to greet");
+    bool     *verbose = clag_bool("verbose", 'v', false,   "enable logging");
+    uint64_t *count   = clag_uint64("count", 'c', 10,      "iteration count");
+    char     **name   = clag_str("name",     'n', "world", "name to greet");
 
     clag_usage("[options]");
 
@@ -27,7 +27,7 @@ int main(int argc, char **argv)
 ```
 
 ```console
-$ ./app -v -c42 -n Alice
+$ ./app -v -c420 -n Alice
 verbose mode
 hello Alice (42)
 
@@ -44,19 +44,47 @@ Options:
 
 - **Short + long flags**
   - `-v`, `--verbose`
+
 - **Flexible value parsing**
-  - `-n 42`
-  - `--n=42`
-  - `-n42`
+  - `-n 42`, `--n=42`, `-n42`
+
 - **Boolean flags**
-  - `-v`, `-abc`
+  - single: `-v`
+  - combined: `-abc`
+  - negation: `--no-flag`
+
 - **List flags**
   - repeated: `-tag a -tag b`
   - delimited: `-tag=a,b,c`
-- **Size parsing**
-  - `1K`, `4M`, `2GiB`
-- **Automatic help**
+
+- **Built-in types**
+  - int64, uint64, float/double, string, size (`1K`, `4M`, `2GiB`)
+
+- **Validation & constraints**
+  - required flags
+  - ranges
+  - enum choices
+  - custom validators
+
+- **Flag relationships**
+  - mutually exclusive flags
+  - dependencies (`A` requires `B`)
+
+- **Aliases**
+  - multiple names for the same flag
+
+- **Automatic help & version**
   - `-h`, `--help`
+  - `-V`, `--version`
+
+- **Help output**
+  - usage line
+  - grouped options
+  - defaults, ranges, choices
+  - examples section
+
 - **Rest arguments**
-- **Error reporting**
-- **Required / deprecated / hidden flags**
+  - access via `clag_rest_argv`
+
+- **Error handling**
+  - detailed diagnostics
