@@ -1,5 +1,5 @@
 /*
-   clag - v2.3.0 - Public Domain - Single-header CLI parser
+   clag - v2.3.1 - Public Domain - Single-header CLI parser
 
    A tiny argument parsing library for C.
 
@@ -216,10 +216,14 @@ void clag_range_double(const char *name, double   lo, double   hi);
 // Enum / choice validation for string flags.
 // `choices` must be a NULL-terminated array.
 //
-// Use CLAG_MAKE_CHOICES(...) for convenience:
-//   clag_choices_auto("mode", "fast", "slow");
+// Use clag_choices(...) for convenience:
+//   clag_choices("mode", "fast", "slow");
 void clag__choices(const char *name, const char **choices);
-#define clag_choices(name, ...) clag__choices(name, ((const char*[]){__VA_ARGS__, NULL}))
+#define clag_choices(name, ...)                           \
+        static const char *_clag_choices_##__LINE__[] = { \
+            __VA_ARGS__, NULL                             \
+        };                                                \
+        clag__choices(name, _clag_choices_##__LINE__);
 
 // Custom validator hook.
 // Called after type parsing and built-in constraint checks succeed.
@@ -286,7 +290,8 @@ bool clag_is_set(const char *name);
 bool clag_was_seen(const char *name);
 
 // Reset all parser state (flags, groups, constraints, examples).
-// Useful in tests. Does NOT free heap memory allocated by list items.
+// Frees internal allocations, including list storage and their elements.
+// Safe to call between parses (useful in tests).
 void clag_reset(void);
 
 // Public iteration over non-hidden flags.
@@ -297,6 +302,7 @@ const char *clag_flag_desc_at(size_t i);
 
 #endif // CLAG_H_
 
+#define CLAG_IMPLEMENTATION
 #ifdef CLAG_IMPLEMENTATION
 
 typedef enum {
@@ -1266,10 +1272,31 @@ const char *clag_flag_desc_at(size_t idx)
 
 void clag_reset(void)
 {
-    memset(&clag__global, 0, sizeof(clag__global));
-    clag__global.current_group = -1;
-}
+    ClagContext *ctx = &clag__global;
 
+    for (size_t i = 0; i < ctx->flags_count; i++) {
+        Clag *f = &ctx->flags[i];
+        if (f->type == CLAG_TYPE_LIST) {
+            ClagList *lst = (ClagList *)f->ref;
+            if (!lst || !lst->items) continue;
+
+            for (size_t j = 0; j < lst->count; j++)
+                free((void *)lst->items[j]);
+            free(lst->items);
+            lst->items = NULL;
+            lst->count = 0;
+            lst->capacity = 0;
+        }
+    }
+
+    if (ctx->rest_argv) {
+        free(ctx->rest_argv);
+        ctx->rest_argv = NULL;
+    }
+    ctx->rest_argc = 0;
+    memset(ctx, 0, sizeof(*ctx));
+    ctx->current_group = -1;
+}
 // ---------------------------------------------------------------------------
 // Diagnostics
 // ---------------------------------------------------------------------------
@@ -1578,7 +1605,23 @@ void clag_print_help(FILE *s)
 
 /*
 # Changelog
-  
+      2.3.1 (2026-04-11)
+         - Fix clag_reset() to properly free internal allocations:
+             - free list storage and individual list elements
+             - free rest argument buffer
+             - avoid memory leaks across repeated parses
+         - Change clag_reset() semantics:
+             - now frees internally owned memory instead of just resetting state
+             - update documentation to reflect new behavior
+         - Improve safety of reset logic:
+             - handle NULL checks for list structures
+             - ensure pointers are cleared after free
+             - restore current_group invariant after full reset
+         - Improve clag_choices macro:
+             - replace compound literal with static storage
+             - avoid lifetime issues with temporary arrays
+             - make usage safer across different compilers and contexts
+         - Correct clag_choices usage example
       2.3.0 (2026-04-11)
          - Add boolean negation support (--no-<flag>)
          - Add constraint system:
