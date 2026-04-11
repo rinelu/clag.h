@@ -35,7 +35,7 @@ jobs:
           if [ "${{ matrix.lang }}" = "c" ]; then
             ${{ matrix.cc }} test.c -g -fsanitize=address,undefined -o test_dbg
           else
-            ${{ matrix.cc }} test.c -x c++ -std=c++17 -g -fsanitize=address,undefined -o test_dbg
+            ${{ matrix.cc }} -x c++ test.c -std=c++17 -g -fsanitize=address,undefined -o test_dbg
           fi
 
       - name: Run (Debug)
