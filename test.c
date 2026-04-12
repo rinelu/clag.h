@@ -39,13 +39,13 @@ static void test_run_validation_range(void) {
     clag_int64("n", 0, 5, "");
     clag_range_int64("n", 1, 10);
     char *av2[] = { (char*)"test", (char*)"--n", (char*)"0" };
-    CHECK(!clag_parse(3, av2) && clag__global.error == CLAG_ERR_RANGE, "below lo fails");
+    CHECK(!clag_parse(3, av2) && clag_global_context.error == CLAG_ERR_RANGE, "below lo fails");
 
     clag_reset();
     clag_double("r", 0, 0.5, "");
     clag_range_double("r", 0.0, 1.0);
     char *av3[] = { (char*)"test", (char*)"--r", (char*)"1.5" };
-    CHECK(!clag_parse(3, av3) && clag__global.error == CLAG_ERR_RANGE, "double above hi fails");
+    CHECK(!clag_parse(3, av3) && clag_global_context.error == CLAG_ERR_RANGE, "double above hi fails");
 }
 
 static void test_run_validation_choices(void) {
@@ -56,7 +56,7 @@ static void test_run_validation_choices(void) {
 
     clag_reset(); reg_mode();
     char *av2[] = { (char*)"test", (char*)"--mode", (char*)"turbo" };
-    CHECK(!clag_parse(3, av2) && clag__global.error == CLAG_ERR_ENUM, "invalid choice fails");
+    CHECK(!clag_parse(3, av2) && clag_global_context.error == CLAG_ERR_ENUM, "invalid choice fails");
 }
 
 static bool val_even(const char *name, void *vp, char *buf, size_t sz)
@@ -82,8 +82,8 @@ static void test_custom_validator(void) {
     clag_validator("x", val_even);
     char *av2[] = { (char*)"test", (char*)"--x", (char*)"3" };
     bool ok = clag_parse(3, av2);
-    CHECK(!ok && clag__global.error == CLAG_ERR_CUSTOM, "odd value fails CLAG_ERR_CUSTOM");
-    CHECK(strstr(clag__global.error_detail, "must be even") != NULL, "custom error message propagated");
+    CHECK(!ok && clag_global_context.error == CLAG_ERR_CUSTOM, "odd value fails CLAG_ERR_CUSTOM");
+    CHECK(strstr(clag_global_context.error_detail, "must be even") != NULL, "custom error message propagated");
 
     // Error message formatting
     printf("  custom error msg: ");
@@ -112,7 +112,7 @@ static void test_version(void) {
     clag_reset();
     clag_bool("verbose", 0, false, "");
     clag_version("1.2.3");
-    CHECK(strcmp(clag__global.version_string, "1.2.3") == 0, "version string stored");
+    CHECK(strcmp(clag_global_context.version_string, "1.2.3") == 0, "version string stored");
     PASS("clag_version registers without crash");
 }
 
@@ -124,7 +124,7 @@ static void test_separation(void) {
     clag_range_int64("n", 1, 10);
     char *av[] = { (char*)"test", (char*)"--n", (char*)"99" };
     bool ok = clag_parse(3, av);
-    CHECK(!ok && clag__global.error == CLAG_ERR_RANGE, "range error comes from validation, not parsing");
+    CHECK(!ok && clag_global_context.error == CLAG_ERR_RANGE, "range error comes from validation, not parsing");
 
     // Provide a bad string that fails parse => error must be INVALID_NUMBER
     clag_reset();
@@ -132,7 +132,7 @@ static void test_separation(void) {
     clag_range_int64("n", 1, 10);
     char *av2[] = { (char*)"test", (char*)"--n", (char*)"abc" };
     ok = clag_parse(3, av2);
-    CHECK(!ok && clag__global.error == CLAG_ERR_INVALID_NUMBER,
+    CHECK(!ok && clag_global_context.error == CLAG_ERR_INVALID_NUMBER,
           "parse error comes from apply_one before validation");
 }
 
@@ -149,14 +149,14 @@ static void test_regression_v23(void) {
     clag_bool("a", 0, false, ""); clag_bool("b", 0, false, "");
     clag_mutex("a", "b", NULL);
     char *av2[] = { (char*)"test", (char*)"--a", (char*)"--b" };
-    CHECK(!clag_parse(3, av2) && clag__global.error == CLAG_ERR_MUTEX, "mutex still works");
+    CHECK(!clag_parse(3, av2) && clag_global_context.error == CLAG_ERR_MUTEX, "mutex still works");
 
     // depends
     clag_reset();
     clag_bool("out", 0, false, ""); clag_bool("file", 0, false, "");
     clag_depends("out", "file");
     char *av3[] = { (char*)"test", (char*)"--out" };
-    CHECK(!clag_parse(2, av3) && clag__global.error == CLAG_ERR_DEPENDS, "depends still works");
+    CHECK(!clag_parse(2, av3) && clag_global_context.error == CLAG_ERR_DEPENDS, "depends still works");
 
     // group/example smoke test
     clag_reset();

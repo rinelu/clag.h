@@ -56,12 +56,12 @@ int main(int argc, char **argv)
 
     clag_group("Sizes & Lists");
     size_t   *size  = clag_size("size", 'z', "4K", "buffer size");
-    ClagList *items = clag_list("item", 'i', ',', "items (comma or repeatable)");
+    Clag_List *items = clag_list("item", 'i', ',', "items (comma or repeatable)");
 
     clag_group("External");
     int64_t ext_num;
     char   *ext_str;
-    ClagList ext_list;
+    Clag_List ext_list;
 
     clag_int64_var(&ext_num, "ext-num", 0, 42, "external int");
     clag_str_var(&ext_str, "ext-str", 0, "hello", "external string");
