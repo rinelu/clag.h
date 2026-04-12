@@ -529,7 +529,6 @@ const char *clagc_flag_desc_at(Clag_Context *cx, size_t i);
 
 #endif // CLAG_H_
 
-#define CLAG_IMPLEMENTATION
 #ifdef CLAG_IMPLEMENTATION
 
 // ---------------------------------------------------------------------------
@@ -1777,6 +1776,7 @@ const char *clag_flag_desc_at(size_t i)
 /*
 # Changelog
 
+      3.0.1 (2026-04-12) Remove #define CLAG_IMPLEMENTATION before #ifdef CLAG_IMPLEMENTATION
       3.0.0 (2026-04-12)
          - Major refactor: introduce Clag_Context (remove global-only design)
          - Add clagc_* API for full context-based usage (multi-instance support)
