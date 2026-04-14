@@ -1,5 +1,5 @@
 /*
-   clag - v3.0.0 - Public Domain - Single-header CLI parser
+   clag - v3.1.0 - Public Domain - Single-header CLI parser
 
    A tiny argument parsing library for C.
 
@@ -104,6 +104,10 @@
 #include <errno.h>
 #include <float.h>
 #include <stdarg.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #ifndef CLAG_CAP
 #define CLAG_CAP 256
@@ -235,6 +239,7 @@ typedef struct {
 
 typedef bool (*ClagValidatorFn)(const char *name, void *val, char *errbuf, size_t errbuf_sz);
 
+// TODO: In the next MAJOR release, rename Clag to Clag_Flag
 typedef struct {
     Clag_Type    type;
     const char *name;
@@ -332,7 +337,11 @@ typedef struct {
     size_t    aliases_count;
 } Clag_Context;
 
-static Clag_Context clag_global_context;
+#ifdef CLAG_IMPLEMENTATION
+static Clag_Context clag_global_context = { .current_group = -1 };
+#else
+extern Clag_Context clag_global_context;
+#endif // CLAG_IMPLEMENTATION
 
 // Register a flag and return a pointer to its storage.
 // sc (short char): pass 0 for no short form.
@@ -429,6 +438,19 @@ void clag_version(const char *version);
 // Automatically handles --help / -h.
 bool clag_parse(int argc, char **argv);
 
+// Windows-only wide argument variant.
+//
+// Accepts UTF-16 arguments (as provided by wmain or CommandLineToArgvW),
+// converts them to UTF-8 internally, and then parses them using the
+// standard clag pipeline.
+//
+// Use this on Windows to ensure correct handling of Unicode input
+// (e.g. non-ASCII file paths, user input, etc.).
+//
+// Returns true on success; false on the first error.
+// Error handling and semantics are identical to clag_parse().
+bool clag_parse_w(int argc, wchar_t **argv);
+
 // Arguments that were not consumed as flags
 // (everything after "--" or first non-flag argument).
 int    clag_rest_argc(void);
@@ -508,6 +530,7 @@ void clagc_group(Clag_Context *cx, const char *label);
 void clagc_version(Clag_Context *cx, const char *version);
 
 bool clagc_parse(Clag_Context *cx, int argc, char **argv);
+bool clagc_parse_w(Clag_Context *cx, int argc, wchar_t **argv);
 
 int    clagc_rest_argc(Clag_Context *cx);
 char **clagc_rest_argv(Clag_Context *cx);
@@ -1268,17 +1291,20 @@ bool clagc_parse(Clag_Context *cx, int argc, char **argv)
     for (size_t gi = 0; gi < cx->mutex_groups_count; gi++) {
         Clag_MutexGroup *g = &cx->mutex_groups[gi];
         const char *first_set = NULL;
+        Clag *first_flag = NULL;
+
         for (size_t mi = 0; mi < g->count; mi++) {
-            Clag *f = clag__find_long(cx, g->members[mi]);
-            if (f && f->is_set) {
-                if (first_set) {
-                    cx->error = CLAG_ERR_MUTEX;
-                    cx->error_flag_name = first_set;
-                    cx->error_detail    = g->members[mi];
-                    return false;
-                }
-                first_set = f->name;
+            Clag *f = clag__find_by_name(cx, g->members[mi]);
+            if (!f || !f->is_set) continue;
+
+            if (first_flag && f != first_flag) {
+                cx->error           = CLAG_ERR_MUTEX;
+                cx->error_flag_name = first_set;
+                cx->error_detail    = f->name;
+                return false;
             }
+            first_flag = f;
+            first_set  = f->name;
         }
     }
 
@@ -1297,6 +1323,57 @@ bool clagc_parse(Clag_Context *cx, int argc, char **argv)
 
     return true;
 }
+
+#ifdef _WIN32
+static char *clag__wchar_to_utf8(const wchar_t *w)
+{
+    if (!w) return NULL;
+
+    int needed = WideCharToMultiByte( CP_UTF8, 0, w, -1, NULL, 0, NULL, NULL);
+    if (needed <= 0) return NULL;
+
+    char *buf = (char *)malloc((size_t)needed);
+    assert(buf && "clag: out of memory");
+
+    int written = WideCharToMultiByte( CP_UTF8, 0, w, -1, buf, needed, NULL, NULL);
+    if (written <= 0) {
+        free(buf);
+        return NULL;
+    }
+
+    return buf;
+}
+
+bool clagc_parse_w(Clag_Context *cx, int argc, wchar_t **argv)
+{
+    if (argc <= 0 || !argv) return false;
+
+    char **utf8_argv = (char **)malloc(sizeof(char *) * (size_t)argc);
+    assert(utf8_argv && "clag: out of memory");
+
+    for (int i = 0; i < argc; i++) {
+        utf8_argv[i] = clag__wchar_to_utf8(argv[i]);
+        if (!utf8_argv[i]) {
+            for (int j = 0; j < i; j++) free(utf8_argv[j]);
+            free(utf8_argv);
+            return false;
+        }
+    }
+
+    bool ok = clagc_parse(cx, argc, utf8_argv);
+
+    for (int i = 0; i < argc; i++) free(utf8_argv[i]);
+    free(utf8_argv);
+
+    return ok;
+}
+#else
+bool clagc_parse_w(Clag_Context *cx, int argc, wchar_t **argv)
+{
+    (void)cx;(void)argc;(void)argv;
+    return false;
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // Accessors
@@ -1732,6 +1809,9 @@ void clag_version(const char *version)
 bool clag_parse(int argc, char **argv)
 { return clagc_parse(&clag_global_context, argc, argv); }
 
+bool clag_parse_w(int argc, wchar_t **argv)
+{ return clagc_parse_w(&clag_global_context, argc, argv); }
+
 int clag_rest_argc(void)
 { return clagc_rest_argc(&clag_global_context); }
 
@@ -1776,7 +1856,19 @@ const char *clag_flag_desc_at(size_t i)
 /*
 # Changelog
 
-      3.0.1 (2026-04-12) Remove #define CLAG_IMPLEMENTATION before #ifdef CLAG_IMPLEMENTATION
+      3.1.0 (2026-04-14)
+         - Introduce clag_parse_w() and clagc_parse_w() for UTF-16 (wchar_t**) argv
+         - Ensures correct handling of non-ASCII input (e.g. file paths, user input)
+         - Provide safe fallback stub on non-Windows platforms
+         - Correctly detect conflicts using flag identity instead of repeated lookup
+         - Improve error reporting (store actual conflicting flag name)
+         - Initialize clag_global_context with default state when CLAG_IMPLEMENTATION is defined
+         - Use extern declaration otherwise (proper header-only pattern)
+         - Replace clag__find_long() with more robust clag__find_by_name() in mutex checks
+
+      3.0.1 (2026-04-12)
+         - Remove #define CLAG_IMPLEMENTATION before #ifdef CLAG_IMPLEMENTATION
+
       3.0.0 (2026-04-12)
          - Major refactor: introduce Clag_Context (remove global-only design)
          - Add clagc_* API for full context-based usage (multi-instance support)
