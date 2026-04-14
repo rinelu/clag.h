@@ -1,6 +1,6 @@
 # clag
 
-A tiny single-header CLI argument parser for C.
+A tiny single-header command line argument parser for C.
 
 ## Example
 

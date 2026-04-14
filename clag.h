@@ -1,5 +1,5 @@
 /*
-   clag - v3.1.0 - Public Domain - Single-header CLI parser
+   clag - v3.1.0 - Public Domain - Single-header command line parser
 
    A tiny argument parsing library for C.
 
