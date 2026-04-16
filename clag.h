@@ -1,5 +1,5 @@
 /*
-   clag - v3.1.0 - Public Domain - Single-header command line parser
+   clag - v3.1.1 - Public Domain - Single-header command line parser
 
    A tiny argument parsing library for C.
 
@@ -384,19 +384,21 @@ void clag_range_double(const char *name, double   lo, double   hi);
 // Enum / choice validation for string flags.
 // `choices` must be a NULL-terminated array.
 //
-// Use clag_choices(...) for convenience:
+// Use the macros below for convenience:
 //   clag_choices("mode", "fast", "slow");
-void  clag__choices(Clag_Context *cx, const char *name, const char **choices);
+//   clagc_choices(&cx, "mode", "fast", "slow");
+void clagc__choices(Clag_Context *cx, const char *name, const char **choices);
+void clag__choices (const char *name, const char **choices);
 #define CLAG__DEFINE_CHOICES(...)                      \
-    static const char *_clag_choices_##__LINE__[] = { \
+    static const char *_clag_choices_##__LINE__[] = {  \
         __VA_ARGS__, NULL                              \
     };
 #define  clag_choices(name, ...)      \
     CLAG__DEFINE_CHOICES(__VA_ARGS__) \
-    clag__choices(&clag_global_context, name, _clag_choices_##__LINE__);
+    clag__choices(name, _clag_choices_##__LINE__);
 #define  clagc_choices(cx, name, ...)     \
     CLAG__DEFINE_CHOICES(__VA_ARGS__)     \
-    clag__choices(cx, name, _clag_choices_##__LINE__);
+    clagc__choices(cx, name, _clag_choices_##__LINE__);
 
 // Custom validator hook.
 // Called after type parsing and built-in constraint checks succeed.
@@ -415,7 +417,7 @@ void clag_alias(const char *name, const char *alias);
 
 // Mutually exclusive: at most one of the named flags may be set.
 // Pass a NULL-terminated list of flag names.
-#define clag_mutex(first, ...) clagc_mutex(&clag_global_context, first, __VA_ARGS__)
+void clag_mutex(const char *first, ...);
 
 // Dependency: if `name` is set, `requires` must also be set.
 void clag_depends(const char *name, const char *requires);
@@ -1028,11 +1030,16 @@ CLAG_DEFINE_RANGE(uint64, uint64_t, UINT64)
 CLAG_DEFINE_RANGE(double, double, DOUBLE)
 #undef CLAG_DEFINE_RANGE
 
-void clag__choices(Clag_Context *cx, const char *name, const char **choices)
+void clagc__choices(Clag_Context *cx, const char *name, const char **choices)
 {
     CLAG__LOOKUP(cx, name);
     assert(f->type == CLAG_TYPE_STR && "clag__choices: flag is not string");
     f->choices = choices;
+}
+
+void clag__choices(const char *name, const char **choices)
+{
+    clagc__choices(&clag_global_context, name, choices);
 }
 
 void clagc_validator(Clag_Context *cx, const char *name, ClagValidatorFn fn)
@@ -1064,14 +1071,12 @@ void clagc_version(Clag_Context *cx, const char *version)
 // Constraint groups
 // ---------------------------------------------------------------------------
 
-void clagc_mutex(Clag_Context *cx, const char *first, ...)
+void clag__mutex(Clag_Context *cx, const char *first, va_list ap)
 {
     assert(cx->mutex_groups_count < CLAG_MUTEX_CAP && "CLAG_MUTEX_CAP exceeded");
     Clag_MutexGroup *g = &cx->mutex_groups[cx->mutex_groups_count++];
     g->count = 0;
 
-    va_list ap;
-    va_start(ap, first);
     const char *name = first;
     while (name) {
         assert(g->count < CLAG_MUTEX_MEMBER_CAP && "CLAG_MUTEX_MEMBER_CAP exceeded");
@@ -1079,8 +1084,17 @@ void clagc_mutex(Clag_Context *cx, const char *first, ...)
         g->members[g->count++] = name;
         name = va_arg(ap, const char *);
     }
-    va_end(ap);
     assert(g->count >= 2 && "clag_mutex: need at least 2 flags");
+}
+
+void clagc_mutex(Clag_Context *cx, const char *first, ...)
+{
+    va_list ap;
+    va_start(ap, first);
+
+    clag__mutex(cx, first, ap);
+
+    va_end(ap);
 }
 
 void clagc_depends(Clag_Context *cx, const char *name, const char *requires)
@@ -1758,6 +1772,16 @@ void clagc_print_help(Clag_Context *cx, FILE *s)
 // These functions forward directly to the context-aware clagc_* API
 // using the internal global Clag_Context instance.
 
+void clag_mutex(const char *first, ...)
+{
+    va_list ap;
+    va_start(ap, first);
+
+    clag__mutex(&clag_global_context, first, ap);
+
+    va_end(ap);
+}
+
 void clag_required  (const char *name)
 { clagc_required(&clag_global_context, name); }
 
@@ -1855,6 +1879,13 @@ const char *clag_flag_desc_at(size_t i)
 
 /*
 # Changelog
+
+      3.1.1 (2026-04-16)
+         - Fix potential linkage issues when referencing clag_global_context from macros
+         - Replace clag_mutex macro with function wrapper to avoid cross-TU address usage
+         - Introduce internal clag__mutex() helper for shared va_list handling
+         - Add clagc__choices() and simplify global clag__choices() wrapper
+         - Fix clag_choices and clagc_choices macros to call proper APIs
 
       3.1.0 (2026-04-14)
          - Introduce clag_parse_w() and clagc_parse_w() for UTF-16 (wchar_t**) argv
