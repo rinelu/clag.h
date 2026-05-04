@@ -30,8 +30,8 @@ int main(int argc, char **argv)
     // ---- grouped flags ----
     clag_group("General");
     bool     *verbose = clag_bool("verbose", 'v', true, "Enable logging");
-    bool     *force   = clag_bool("force",   'f', false, "force operation");
-    bool     *dry     = clag_bool("dry-run", 'd', false, "simulate only");
+    bool     *force   = clag_bool("force",   'f', NULL, "force operation");
+    bool     *dry     = clag_bool("dry-run", 'd', NULL, "simulate only");
 
     clag_alias("verbose", "debug"); // --debug works as alias
 
@@ -46,7 +46,7 @@ int main(int argc, char **argv)
     clag_range_double("ratio", 0.0, 1.0);
 
     clag_group("Strings");
-    char **name = clag_str("name", 'n', "world", "name to greet");
+    char **name = clag_str("name", 'n', NULL, "name to greet");
     char **mode = clag_str("mode", 0, "fast", "operation mode");
 
     clag_choices("mode", "fast", "slow", "turbo");
@@ -74,6 +74,8 @@ int main(int argc, char **argv)
     clag_depends("scale", "mode");             // scale requires mode
 
     clag_deprecated("ratio", "use --scale instead");
+
+    clag_no_default("force", "dry-run");
 
     // ---- parse ----
     if (!clag_parse(argc, argv)) {

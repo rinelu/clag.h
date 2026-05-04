@@ -1,5 +1,5 @@
 /*
-   clag - v3.1.1 - Public Domain - Single-header command line parser
+   clag - v3.2.0 - Public Domain - Single-header command line parser
 
    A tiny argument parsing library for C.
 
@@ -241,17 +241,18 @@ typedef bool (*ClagValidatorFn)(const char *name, void *val, char *errbuf, size_
 
 // TODO: In the next MAJOR release, rename Clag to Clag_Flag
 typedef struct {
-    Clag_Type    type;
+    Clag_Type   type;
     const char *name;
     char        short_char;
     const char *desc;
 
     Clag_Value  val;
-    void      *ref;
-    bool       ref_is_external;
+    void *ref;
+    bool  ref_is_external;
 
     Clag_Value  def; 
     const char *def_str; // raw string for size default display
+    bool        def_is_null;
 
     char list_delim;
 
@@ -354,7 +355,7 @@ double   *clag_double(const char *name, char sc, double      def, const char *de
 size_t   *clag_size  (const char *name, char sc, const char *def, const char *desc);
 char    **clag_str   (const char *name, char sc, const char *def, const char *desc);
 // delim: character splitting repeated values (0 = no splitting, ',' is typical).
-Clag_List *clag_list  (const char *name, char sc, char        delim, const char *desc);
+Clag_List *clag_list  (const char *name, char sc, char     delim, const char *desc);
 
 // Register a flag and store results into a caller-provided variable.
 void clag_bool_var  (bool     *v, const char *name, char sc, bool        def, const char *desc);
@@ -364,13 +365,14 @@ void clag_float_var (float    *v, const char *name, char sc, float       def, co
 void clag_double_var(double   *v, const char *name, char sc, double      def, const char *desc);
 void clag_size_var  (size_t   *v, const char *name, char sc, const char *def, const char *desc);
 void clag_str_var   (char    **v, const char *name, char sc, const char *def, const char *desc);
-void clag_list_var  (Clag_List *v, const char *name, char sc, char        delim, const char *desc);
+void clag_list_var  (Clag_List *v, const char *name, char sc, char     delim, const char *desc);
 
 // Flag modifiers
 // call after registration, before clag_parse
 void clag_required  (const char *name);                  // fail if not provided
 void clag_deprecated(const char *name, const char *msg); // warn on use
 void clag_hidden    (const char *name);                  // hide from --help
+void clag_no_default(const char *first, ...);            // Supress [default: ] in help message
 
 // Value constraints
 // Checked inside clag__run_validation() after parsing.
@@ -387,18 +389,30 @@ void clag_range_double(const char *name, double   lo, double   hi);
 // Use the macros below for convenience:
 //   clag_choices("mode", "fast", "slow");
 //   clagc_choices(&cx, "mode", "fast", "slow");
-void clagc__choices(Clag_Context *cx, const char *name, const char **choices);
-void clag__choices (const char *name, const char **choices);
-#define CLAG__DEFINE_CHOICES(...)                      \
-    static const char *_clag_choices_##__LINE__[] = {  \
-        __VA_ARGS__, NULL                              \
+void  clagc__choices(Clag_Context *cx, const char *name, const char **choices);
+void  clag__choices(const char *name, const char **choices);
+// force expansion before concatenation
+#define CLAG__CAT(a, b) CLAG__CAT_IMPL(a, b)
+#define CLAG__CAT_IMPL(a, b) a##b
+
+#define CLAG__DEFINE_CHOICES(id, ...)                 \
+    static const char *CLAG__CAT(_clag_choices_, id)[] = { \
+        __VA_ARGS__, NULL                            \
     };
-#define  clag_choices(name, ...)      \
-    CLAG__DEFINE_CHOICES(__VA_ARGS__) \
-    clag__choices(name, _clag_choices_##__LINE__);
-#define  clagc_choices(cx, name, ...)     \
-    CLAG__DEFINE_CHOICES(__VA_ARGS__)     \
-    clagc__choices(cx, name, _clag_choices_##__LINE__);
+
+#define CLAG__CHOICES_IMPL(id, name, ...)             \
+    CLAG__DEFINE_CHOICES(id, __VA_ARGS__)             \
+    clag__choices(name, CLAG__CAT(_clag_choices_, id))
+
+#define CLAGC__CHOICES_IMPL(id, cx, name, ...)        \
+    CLAG__DEFINE_CHOICES(id, __VA_ARGS__)             \
+    clagc__choices(cx, name, CLAG__CAT(_clag_choices_, id))
+
+#define clag_choices(name, ...)                      \
+    CLAG__CHOICES_IMPL(__LINE__, name, __VA_ARGS__)
+
+#define clagc_choices(cx, name, ...)                 \
+    CLAGC__CHOICES_IMPL(__LINE__, cx, name, __VA_ARGS__)
 
 // Custom validator hook.
 // Called after type parsing and built-in constraint checks succeed.
@@ -514,6 +528,7 @@ void clagc_list_var  (Clag_Context *cx, Clag_List *v, const char *name, char sc,
 void clagc_required  (Clag_Context *cx, const char *name);
 void clagc_deprecated(Clag_Context *cx, const char *name, const char *msg);
 void clagc_hidden    (Clag_Context *cx, const char *name);
+void clagc_no_default(Clag_Context *cx, const char *first, ...);
 
 void clagc_range_int64 (Clag_Context *cx, const char *name, int64_t  lo, int64_t  hi);
 void clagc_range_uint64(Clag_Context *cx, const char *name, uint64_t lo, uint64_t hi);
@@ -974,14 +989,16 @@ void clagc_size_var(Clag_Context *cx, size_t *v, const char *name, char sc, cons
 
 char **clagc_str(Clag_Context *cx, const char *name, char sc, const char *def, const char *desc)
 {
-    Clag *f = clag__register(cx, CLAG_TYPE_STR, NULL, name, sc, desc);
+    Clag *f = clag__register(cx, CLAG_TYPE_STR, NULL, name, sc, desc);      
+    f->def_is_null = (def == NULL);
     f->def.as_str = (char *)def; *(char **)f->ref = (char *)def;
     return (char **)f->ref;
 }
 
 void clagc_str_var(Clag_Context *cx, char **v, const char *name, char sc, const char *def, const char *desc)
 {
-    Clag *f = clag__register(cx, CLAG_TYPE_STR, v, name, sc, desc);
+    Clag *f = clag__register(cx, CLAG_TYPE_STR, v, name, sc, desc);      
+    f->def_is_null = (def == NULL);
     f->def.as_str = (char *)def; *v = (char *)def;
 }
 
@@ -1012,6 +1029,33 @@ void clagc_required  (Clag_Context *cx, const char *name) { CLAG__LOOKUP(cx, nam
 void clagc_hidden    (Clag_Context *cx, const char *name) { CLAG__LOOKUP(cx, name); f->hidden   = true; }
 void clagc_deprecated(Clag_Context *cx, const char *name, const char *msg)
     { CLAG__LOOKUP(cx, name); f->deprecated = true; f->depr_msg = msg; }
+
+static void clag__no_default(Clag_Context *cx, const char *first, va_list ap)
+{
+    const char *name = first;
+    while (name) {
+        Clag *f = clag__find_long(cx, name);
+        assert(f && "clag_no_default: unknown flag name");
+        f->def_is_null = true;
+        name = va_arg(ap, const char *);
+    }
+}
+
+void clagc_no_default(Clag_Context *cx, const char *first, ...)
+{
+    va_list ap;
+    va_start(ap, first);
+    clag__no_default(cx, first, ap);
+    va_end(ap);
+}
+
+void clag_no_default(const char *first, ...)
+{
+    va_list ap;
+    va_start(ap, first);
+    clag__no_default(&clag_global_context, first, ap);
+    va_end(ap);
+}
 
 #define CLAG_DEFINE_RANGE(NAME, CTYPE, ENUM)                  \
 void clagc_range_##NAME(Clag_Context *cx, const char *name, CTYPE lo, CTYPE hi) \
@@ -1665,10 +1709,17 @@ static void clag__print_flag_row(Clag_Context *cx, FILE *s, const Clag *f, int n
 {
     if (f->hidden) return;
 
-    if (f->short_char)
-        fprintf(s, "  -%c, --%-*s", f->short_char, nw, f->name);
-    else
-        fprintf(s, "      --%-*s", nw, f->name);
+    if (f->type == CLAG_TYPE_BOOL) {
+        if (f->short_char)
+            fprintf(s, "  -%c, --[no-]%-*s", f->short_char, nw, f->name);
+        else
+            fprintf(s, "      --[no-]%-*s", nw, f->name);
+    } else {
+        if (f->short_char)
+            fprintf(s, "  -%c, --%-*s", f->short_char, nw, f->name);
+        else
+            fprintf(s, "      --%-*s", nw, f->name);
+    }
 
     fprintf(s, "  %-8s  ", clag__type_name(f->type));
 
@@ -1692,7 +1743,7 @@ static void clag__print_flag_row(Clag_Context *cx, FILE *s, const Clag *f, int n
 
     if (f->range.active) DAPP(" [%g..%g]", f->range.lo, f->range.hi);
 
-    if (f->type != CLAG_TYPE_LIST) {
+    if (f->type != CLAG_TYPE_LIST && !f->def_is_null) {
         DAPP(" [default: ");
         Clag__BufCtx b = { desc_buf, &pos, &rem };
         clag__print_default_cb(clag__buf_write, &b, f);
@@ -1758,8 +1809,11 @@ void clagc_print_help(Clag_Context *cx, FILE *s)
 {
     const char *prog = cx->program_name   ? cx->program_name   : "program";
     const char *syn  = cx->usage_synopsis ? cx->usage_synopsis : "[options]";
-    fprintf(s, "Usage: %s %s\n\nOptions:\n", prog, syn);
-    clagc_print_options(cx, s);
+    fprintf(s, "Usage: %s %s\n", prog, syn);
+    if (clagc_count(cx) > 0) {
+        fprintf(s, "\nOptions:\n");
+        clagc_print_options(cx, s);
+    }
 
     if (cx->examples_count > 0) {
         fprintf(s, "\nExamples:\n");
@@ -1879,6 +1933,15 @@ const char *clag_flag_desc_at(size_t i)
 
 /*
 # Changelog
+
+      3.2.0 (2026-05-04)
+         - Add clag_no_default() / clagc_no_default() to hide default values in help
+         - Improve help output:
+             - show bool flags as --[no-]flag
+             - omit empty "Options:" section
+             - skip default display when suppressed or NULL
+         - Track NULL defaults explicitly for string flags
+         - Fix and harden clag_choices / clagc_choices macros
 
       3.1.1 (2026-04-16)
          - Fix potential linkage issues when referencing clag_global_context from macros
